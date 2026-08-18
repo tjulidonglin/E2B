@@ -13,6 +13,7 @@ import argparse
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional
 
 try:
@@ -41,6 +42,12 @@ Examples:
         help="Number of test iterations (default: 10)"
     )
     parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Number of concurrent sandboxes (default: 1)"
+    )
+    parser.add_argument(
         "--api-key",
         type=str,
         default=None,
@@ -65,14 +72,14 @@ def get_api_key(cli_key: Optional[str]) -> str:
     sys.exit(1)
 
 
-def run_single_test(api_key: str, test_num: int, total: int) -> float:
+def run_single_test(api_key: str, test_num: int, total: int, concurrency: int) -> float:
     """
     Run a single cold start test.
     
     Returns:
         float: Time in seconds from sandbox creation to command completion
     """
-    print(f"\n[{test_num}/{total}] Starting test...")
+    print(f"[{test_num}/{total}] Starting test... (concurrency: {concurrency})")
     
     start_time = time.time()
     
@@ -168,6 +175,38 @@ def print_results(times: List[float], stats: dict) -> None:
     print("=" * 60)
 
 
+def run_concurrent_tests(api_key: str, count: int, concurrency: int) -> List[float]:
+    """
+    Run tests with specified concurrency.
+    
+    Args:
+        api_key: E2B API key
+        count: Total number of tests
+        concurrency: Number of concurrent sandboxes
+    
+    Returns:
+        List of elapsed times for successful tests
+    """
+    times: List[float] = []
+    failed = 0
+    
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = {
+            executor.submit(run_single_test, api_key, i, count, concurrency): i
+            for i in range(1, count + 1)
+        }
+        
+        for future in as_completed(futures):
+            test_num = futures[future]
+            try:
+                elapsed = future.result()
+                times.append(elapsed)
+            except Exception:
+                failed += 1
+    
+    return times, failed
+
+
 def main():
     """Main entry point."""
     args = parse_args()
@@ -177,18 +216,11 @@ def main():
     print("E2B Sandbox Cold Start Time Test")
     print("=" * 60)
     print(f"Number of tests: {args.count}")
+    print(f"Concurrency: {args.concurrency}")
     print(f"Test command: echo 0")
     print("=" * 60)
     
-    times: List[float] = []
-    failed = 0
-    
-    for i in range(1, args.count + 1):
-        try:
-            elapsed = run_single_test(api_key, i, args.count)
-            times.append(elapsed)
-        except Exception:
-            failed += 1
+    times, failed = run_concurrent_tests(api_key, args.count, args.concurrency)
     
     if not times:
         print("\nError: All tests failed!")
