@@ -30,12 +30,23 @@ python cold_start_test.py
 # 指定测试次数
 python cold_start_test.py --count 20
 
+# 指定并发数（同时启动多个沙箱）
+python cold_start_test.py --count 10 --concurrency 3
+
 # 通过命令行传入 API Key
 python cold_start_test.py --api-key your-api-key
 
 # 组合使用
-python cold_start_test.py --count 20 --api-key your-api-key
+python cold_start_test.py --count 20 --concurrency 5 --api-key your-api-key
 ```
+
+### 命令行参数
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--count` | 测试次数 | 10 |
+| `--concurrency` | 并发沙箱数量 | 1 |
+| `--api-key` | E2B API Key | 从环境变量 `E2B_API_KEY` 读取 |
 
 ### 输出说明
 
