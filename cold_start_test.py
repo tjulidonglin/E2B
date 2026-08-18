@@ -78,12 +78,12 @@ def run_single_test(api_key: str, test_num: int, total: int) -> float:
     
     try:
         # Create sandbox and execute simple command
-        sandbox = Sandbox(api_key=api_key)
-        result = sandbox.run_code("echo 0")
+        sandbox = Sandbox.create(api_key=api_key)
+        result = sandbox.commands.run("echo 0")
         elapsed_time = time.time() - start_time
         
         # Clean up
-        sandbox.close()
+        sandbox.kill()
         
         print(f"[{test_num}/{total}] Completed in {elapsed_time:.3f}s")
         return elapsed_time
