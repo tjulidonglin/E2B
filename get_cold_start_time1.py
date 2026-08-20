@@ -6,7 +6,7 @@ This script tests the cold start time of E2B sandboxes, measuring the time
 from API call to create a sandbox until a simple "echo 0" command completes.
 
 Usage:
-    python cold_start_test.py [--count N] [--api-key KEY]
+    python cold_start_test.py [--count N] [--api-key KEY] [--template TEMPLATE]
 """
 
 import argparse
@@ -17,9 +17,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional
 
 try:
-    from e2b import Sandbox
+    from e2b_code_interpreter import Sandbox
 except ImportError:
-    print("Error: e2b package not installed. Please install it with: pip install e2b")
+    print("Error: e2b_code_interpreter package not installed. Please install it with: pip install e2b_code_interpreter")
     sys.exit(1)
 
 
@@ -33,6 +33,7 @@ Examples:
     python cold_start_test.py                    # Run 10 tests (default)
     python cold_start_test.py --count 20         # Run 20 tests
     python cold_start_test.py --api-key your_key # Specify API key
+    python cold_start_test.py --template my-tmpl # Specify sandbox template
         """
     )
     parser.add_argument(
@@ -53,6 +54,12 @@ Examples:
         default=None,
         help="E2B API key (overrides E2B_API_KEY environment variable)"
     )
+    parser.add_argument(
+        "--template",
+        type=str,
+        default=None,
+        help="Sandbox template name or ID (overrides CUBE_TEMPLATE_ID environment variable)"
+    )
     return parser.parse_args()
 
 
@@ -72,7 +79,23 @@ def get_api_key(cli_key: Optional[str]) -> str:
     sys.exit(1)
 
 
-def run_single_test(api_key: str, test_num: int, total: int, concurrency: int) -> float:
+def get_template(cli_template: Optional[str]) -> str:
+    """Get template from CLI argument or environment variable."""
+    if cli_template:
+        return cli_template
+
+    env_template = os.environ.get("CUBE_TEMPLATE_ID")
+    if env_template:
+        return env_template
+
+    print("Error: Sandbox template not provided.")
+    print("Please either:")
+    print("  1. Pass it via --template argument")
+    print("  2. Set CUBE_TEMPLATE_ID environment variable")
+    sys.exit(1)
+
+
+def run_single_test(api_key: str, template: str, test_num: int, total: int, concurrency: int) -> float:
     """
     Run a single cold start test.
     
@@ -85,7 +108,7 @@ def run_single_test(api_key: str, test_num: int, total: int, concurrency: int) -
     
     try:
         # Create sandbox and execute simple command
-        sandbox = Sandbox.create(api_key=api_key)
+        sandbox = Sandbox.create(template=template, api_key=api_key)
         result = sandbox.commands.run("echo 0")
         elapsed_time = time.time() - start_time
         
@@ -175,12 +198,13 @@ def print_results(times: List[float], stats: dict) -> None:
     print("=" * 60)
 
 
-def run_concurrent_tests(api_key: str, count: int, concurrency: int) -> List[float]:
+def run_concurrent_tests(api_key: str, template: str, count: int, concurrency: int) -> List[float]:
     """
     Run tests with specified concurrency.
     
     Args:
         api_key: E2B API key
+        template: Sandbox template name or ID
         count: Total number of tests
         concurrency: Number of concurrent sandboxes
     
@@ -192,7 +216,7 @@ def run_concurrent_tests(api_key: str, count: int, concurrency: int) -> List[flo
     
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
         futures = {
-            executor.submit(run_single_test, api_key, i, count, concurrency): i
+            executor.submit(run_single_test, api_key, template, i, count, concurrency): i
             for i in range(1, count + 1)
         }
         
@@ -211,16 +235,18 @@ def main():
     """Main entry point."""
     args = parse_args()
     api_key = get_api_key(args.api_key)
+    template = get_template(args.template)
     
     print("=" * 60)
     print("E2B Sandbox Cold Start Time Test")
     print("=" * 60)
     print(f"Number of tests: {args.count}")
     print(f"Concurrency: {args.concurrency}")
+    print(f"Template: {template}")
     print(f"Test command: echo 0")
     print("=" * 60)
     
-    times, failed = run_concurrent_tests(api_key, args.count, args.concurrency)
+    times, failed = run_concurrent_tests(api_key, template, args.count, args.concurrency)
     
     if not times:
         print("\nError: All tests failed!")
