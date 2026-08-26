@@ -1,0 +1,80 @@
+# E2B Sandbox Test Configuration
+# This file provides default configuration values for the test suite
+
+# General Settings
+general:
+  template_id: ${CUBE_TEMPLATE_ID}  # Sandbox template ID (from environment variable)
+  api_key: ${E2B_API_KEY}           # E2B API Key (from environment variable)
+  output_dir: reports               # Directory for test reports
+  default_concurrency: 50           # Default number of concurrent sandboxes
+
+# Performance Test Settings
+performance:
+  cold_start:
+    runs: 10                        # Number of cold start tests
+    probe_timeout: 30               # Timeout for sandbox readiness probe (seconds)
+  
+  throughput:
+    concurrency_levels: [5, 10, 20, 50, 100]  # Concurrency levels to test
+    max_workers: 100                # Maximum concurrent workers
+  
+  latency:
+    iterations: 100                 # Number of iterations per command
+    commands:
+      - "echo 'hello'"
+      - "pwd"
+      - "ls"
+      - "whoami"
+      - "date"
+  
+  resource_monitor:
+    duration: 60                    # Monitoring duration (seconds)
+    interval: 5                     # Sampling interval (seconds)
+    load_test_duration: 30          # Load test duration (seconds)
+
+# Security Test Settings
+security:
+  network_isolation:
+    test_urls:
+      - "http://www.google.com"
+      - "http://www.baidu.com"
+      - "https://www.google.com"
+      - "https://api.ipify.org?format=json"
+    test_domains:
+      - "google.com"
+      - "github.com"
+      - "example.com"
+  
+  filesystem_isolation:
+    test_directory: "/tmp"
+    max_file_size: "100MB"
+  
+  process_isolation:
+    unique_marker: "UNIQUEPROCESS123"
+  
+  resource_isolation:
+    cpu_test_duration: 10           # CPU test duration (seconds)
+    memory_allocation: 1024         # Memory to allocate (MB)
+    disk_write_size: 500            # Disk write size (MB)
+
+# Reporting Settings
+reporting:
+  format: html                      # Report format: html, json, or both
+  include_metrics: true             # Include detailed metrics
+  include_errors: true              # Include error messages
+  include_timestamps: true          # Include timestamps
+
+# Test Execution Settings
+execution:
+  timeout:
+    sandbox_create: 120             # Timeout for sandbox creation (seconds)
+    command_execute: 10             # Timeout for command execution (seconds)
+    cleanup: 30                     # Timeout for cleanup operations (seconds)
+  
+  retry:
+    max_retries: 3                  # Maximum retry attempts
+    retry_delay: 5                  # Delay between retries (seconds)
+  
+  cleanup:
+    auto_cleanup: true              # Automatically cleanup sandboxes
+    force_kill: false               # Force kill sandboxes on cleanup
