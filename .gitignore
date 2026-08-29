@@ -35,6 +35,8 @@ ENV/
 
 # Test reports (generated)
 reports/*.html
+sandbox_performance_report_*.html
+cube_sandbox_performance_report_*.html
 
 # Keep .gitkeep in reports
 !reports/.gitkeep
@@ -47,3 +49,6 @@ Thumbs.db
 *.key
 *.pem
 .env.local
+
+# Local env config (don't commit)
+tests/tencent/env
