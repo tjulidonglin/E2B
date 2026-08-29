@@ -28,6 +28,31 @@ class ProcessIsolationTest:
     def __init__(self, template: str, report: ReportGenerator = None):
         self.template = template
         self.report = report or ReportGenerator()
+        # 华为云配置：从环境变量读取
+        self.api_url = os.environ.get("E2B_API_URL")
+        self.sandbox_url = os.environ.get("E2B_SANDBOX_URL")
+        self.api_key = os.environ.get("E2B_API_KEY")
+    
+    def _create_sandbox(self, timeout: int = 120):
+        """创建 Sandbox 实例，自动注入华为云配置"""
+        kwargs = {
+            "template": self.template,
+            "timeout": timeout,
+        }
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
+        if self.api_url:
+            kwargs["api_url"] = self.api_url
+        if self.sandbox_url:
+            kwargs["sandbox_url"] = self.sandbox_url
+        
+        sbx = Sandbox.create(**kwargs)
+        
+        # 按需应用华为云补丁（标准 E2B 环境自动跳过）
+        from utils.huawei_patch import patch_sandbox_if_needed
+        patch_sandbox_if_needed(sbx)
+        
+        return sbx
     
     def test_process_visibility(self) -> Dict[str, Any]:
         """
@@ -41,7 +66,7 @@ class ProcessIsolationTest:
         
         # Sandbox A: Start a process
         print(f"  [1] Starting unique process in Sandbox A")
-        sbx_a = Sandbox.create(template=self.template, timeout=120)
+        sbx_a = self._create_sandbox(timeout=120)
         
         try:
             # Start a background process
@@ -53,11 +78,12 @@ class ProcessIsolationTest:
             print(f"    Processes in A: {len(ps_result.stdout.split(chr(10)))} lines")
         
         finally:
-            sbx_a.kill()
+            from utils.huawei_patch import safe_kill_sandbox
+            safe_kill_sandbox(sbx_a, "A")
         
         # Sandbox B: Check for processes from A
         print(f"\n  [2] Checking for processes in Sandbox B")
-        sbx_b = Sandbox.create(template=self.template, timeout=120)
+        sbx_b = self._create_sandbox(timeout=120)
         
         try:
             ps_result = sbx_b.commands.run("ps aux", timeout=10)
@@ -70,7 +96,8 @@ class ProcessIsolationTest:
             else:
                 print(f"    ✓ Process from A NOT visible (ISOLATION PASSED)")
         finally:
-            sbx_b.kill()
+            from utils.huawei_patch import safe_kill_sandbox
+            safe_kill_sandbox(sbx_b, "B")
         
         success = not sleep_visible
         

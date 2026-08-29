@@ -34,6 +34,31 @@ class ThroughputTest:
         self.template = template
         self.concurrency = concurrency
         self.report = report or ReportGenerator()
+        # 华为云配置：从环境变量读取
+        self.api_url = os.environ.get("E2B_API_URL")
+        self.sandbox_url = os.environ.get("E2B_SANDBOX_URL")
+        self.api_key = os.environ.get("E2B_API_KEY")
+    
+    def _create_sandbox(self, timeout: int = 120):
+        """创建 Sandbox 实例，自动注入华为云配置"""
+        kwargs = {
+            "template": self.template,
+            "timeout": timeout,
+        }
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
+        if self.api_url:
+            kwargs["api_url"] = self.api_url
+        if self.sandbox_url:
+            kwargs["sandbox_url"] = self.sandbox_url
+        
+        sbx = Sandbox.create(**kwargs)
+        
+        # 按需应用华为云补丁（标准 E2B 环境自动跳过）
+        from utils.huawei_patch import patch_sandbox_if_needed
+        patch_sandbox_if_needed(sbx)
+        
+        return sbx
     
     def test_concurrent_creation(self, count: int = None) -> Dict[str, Any]:
         """
@@ -58,7 +83,7 @@ class ThroughputTest:
         def create_sandbox(idx: int):
             try:
                 s = time.perf_counter()
-                sbx = Sandbox.create(template=self.template, timeout=120)
+                sbx = self._create_sandbox(timeout=120)
                 elapsed = time.perf_counter() - s
                 sbx.kill()
                 return True, elapsed
@@ -81,6 +106,20 @@ class ThroughputTest:
         total_time = time.perf_counter() - start_time
         throughput = success_count / total_time if total_time > 0 else 0
         
+        # 计算创建时间的百分位数
+        def _percentile(values, p):
+            if not values:
+                return None
+            sorted_vals = sorted(values)
+            n = len(sorted_vals)
+            if n == 1:
+                return sorted_vals[0]
+            idx = min(int(n * p), n - 1)
+            return sorted_vals[idx]
+        
+        p95_create = _percentile(create_times, 0.95)
+        p99_create = _percentile(create_times, 0.99)
+        
         result = {
             'test_name': 'Concurrent Creation Throughput',
             'test_type': 'performance',
@@ -93,6 +132,8 @@ class ThroughputTest:
                 'Success Rate': f"{success_count/count*100:.1f}%",
                 'Throughput': f"{throughput:.2f} sandboxes/s",
                 'Avg Create Time': f"{sum(create_times)/len(create_times):.2f}s" if create_times else 'N/A',
+                'P95 Create Time': f"{p95_create:.2f}s" if p95_create is not None else 'N/A',
+                'P99 Create Time': f"{p99_create:.2f}s" if p99_create is not None else 'N/A',
                 'Total Time': f"{total_time:.2f}s",
             },
         }
@@ -125,7 +166,7 @@ class ThroughputTest:
             nonlocal total_commands, success_commands, failed_commands
             
             try:
-                sbx = Sandbox.create(template=self.template, timeout=120)
+                sbx = self._create_sandbox(timeout=120)
                 for i in range(iterations):
                     total_commands += 1
                     cmd_start = time.perf_counter()
@@ -150,6 +191,20 @@ class ThroughputTest:
         throughput = success_commands / total_time if total_time > 0 else 0
         avg_latency = sum(latencies) / len(latencies) if latencies else 0
         
+        # 计算延迟的百分位数
+        def _percentile(values, p):
+            if not values:
+                return None
+            sorted_vals = sorted(values)
+            n = len(sorted_vals)
+            if n == 1:
+                return sorted_vals[0]
+            idx = min(int(n * p), n - 1)
+            return sorted_vals[idx]
+        
+        p95_latency = _percentile(latencies, 0.95)
+        p99_latency = _percentile(latencies, 0.99)
+        
         result = {
             'test_name': 'Command Execution Throughput',
             'test_type': 'performance',
@@ -161,6 +216,8 @@ class ThroughputTest:
                 'Failed': failed_commands,
                 'Throughput': f"{throughput:.2f} commands/s",
                 'Avg Latency': f"{avg_latency*1000:.2f}ms",
+                'P95 Latency': f"{p95_latency*1000:.2f}ms" if p95_latency is not None else 'N/A',
+                'P99 Latency': f"{p99_latency*1000:.2f}ms" if p99_latency is not None else 'N/A',
                 'Total Time': f"{total_time:.2f}s",
             },
         }

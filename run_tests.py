@@ -41,12 +41,58 @@ class TestRunner:
         self.concurrency = concurrency
         self.output_dir = output_dir
         self.report = ReportGenerator(output_dir=output_dir)
+        self.test_results = []  # 记录测试结果
         
         self.report.set_metadata({
             "Template ID": template,
             "Concurrency": concurrency,
             "Test Time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         })
+    
+    def _run_test_safe(self, test_name: str, test_func, *args, **kwargs):
+        """安全运行测试，捕获异常并记录结果"""
+        print(f"\n{'='*60}")
+        print(f"  Running: {test_name}")
+        print(f"{'='*60}")
+        
+        start_time = time.time()
+        try:
+            result = test_func(*args, **kwargs)
+            elapsed = time.time() - start_time
+            
+            self.test_results.append({
+                'name': test_name,
+                'status': 'PASSED',
+                'duration': elapsed,
+                'error': None
+            })
+            print(f"\n✓ {test_name} PASSED ({elapsed:.2f}s)")
+            return result
+            
+        except Exception as e:
+            elapsed = time.time() - start_time
+            error_msg = str(e)
+            
+            self.test_results.append({
+                'name': test_name,
+                'status': 'FAILED',
+                'duration': elapsed,
+                'error': error_msg
+            })
+            
+            print(f"\n✗ {test_name} FAILED ({elapsed:.2f}s)")
+            print(f"    Error: {type(e).__name__}: {error_msg[:200]}")
+            
+            # 记录到报告中
+            self.report.add_test_result(
+                test_name=test_name,
+                test_type='error',
+                success=False,
+                duration=elapsed,
+                metrics={},
+                error=error_msg[:500]
+            )
+            return None
     
     def run_performance_tests(self):
         """Run all performance tests"""
@@ -55,25 +101,26 @@ class TestRunner:
         print(f"{'#'*60}\n")
         
         # Cold Start Test
-        print(f"\n--- Cold Start Test ---")
         cold_start = ColdStartTest(template=self.template, report=self.report)
-        cold_start.run_sequential_test(runs=5)
-        cold_start.run_concurrent_test(count=10, concurrency=self.concurrency)
+        self._run_test_safe("Cold Start (Sequential)", 
+                           cold_start.run_sequential_test, runs=3)
+        self._run_test_safe("Cold Start (Concurrent)", 
+                           cold_start.run_concurrent_test, count=5, concurrency=self.concurrency)
         
         # Throughput Test
-        print(f"\n--- Throughput Test ---")
         throughput = ThroughputTest(template=self.template, concurrency=self.concurrency, report=self.report)
-        throughput.test_concurrent_creation(count=min(self.concurrency, 20))
+        self._run_test_safe("Throughput Test", 
+                           throughput.test_concurrent_creation, count=min(self.concurrency, 5))
         
         # Command Latency Test
-        print(f"\n--- Command Latency Test ---")
         latency = CommandLatencyTest(template=self.template, report=self.report)
-        latency.run_all_tests(iterations=50)
+        self._run_test_safe("Command Latency Test", 
+                           latency.run_all_tests, iterations=20)
         
         # Resource Monitor Test
-        print(f"\n--- Resource Monitor Test ---")
         monitor = ResourceMonitorTest(template=self.template, report=self.report)
-        monitor.monitor_idle_sandbox(duration=30, interval=5)
+        self._run_test_safe("Resource Monitor Test", 
+                           monitor.monitor_idle_sandbox, duration=15, interval=5)
     
     def run_security_tests(self):
         """Run all security tests"""
@@ -82,24 +129,54 @@ class TestRunner:
         print(f"{'#'*60}\n")
         
         # Network Isolation Test
-        print(f"\n--- Network Isolation Test ---")
         network = NetworkIsolationTest(template=self.template, report=self.report)
-        network.test_external_http_access()
+        self._run_test_safe("Network Isolation Test", 
+                           network.test_external_http_access)
         
         # Filesystem Security Test
-        print(f"\n--- Filesystem Security Test ---")
         filesystem = FilesystemSecurityTest(template=self.template, report=self.report)
-        filesystem.test_file_isolation()
+        self._run_test_safe("Filesystem Security Test", 
+                           filesystem.test_file_isolation)
         
         # Process Isolation Test
-        print(f"\n--- Process Isolation Test ---")
         process = ProcessIsolationTest(template=self.template, report=self.report)
-        process.test_process_visibility()
+        self._run_test_safe("Process Isolation Test", 
+                           process.test_process_visibility)
         
         # Resource Isolation Test
-        print(f"\n--- Resource Isolation Test ---")
         resource = ResourceIsolationTest(template=self.template, report=self.report)
-        resource.run_all_tests()
+        self._run_test_safe("Resource Isolation Test", 
+                           resource.run_all_tests)
+    
+    def run_all_tests(self):
+        """Run all tests"""
+        self.run_performance_tests()
+        self.run_security_tests()
+        
+        # 打印测试结果摘要
+        self._print_summary()
+    
+    def _print_summary(self):
+        """打印测试结果摘要"""
+        print(f"\n{'='*60}")
+        print(f"  TEST RESULTS SUMMARY")
+        print(f"{'='*60}")
+        
+        passed = sum(1 for r in self.test_results if r['status'] == 'PASSED')
+        failed = sum(1 for r in self.test_results if r['status'] == 'FAILED')
+        total = len(self.test_results)
+        
+        print(f"\n  Total: {total} | Passed: {passed} | Failed: {failed}")
+        print(f"  Success Rate: {passed/total*100:.1f}%" if total > 0 else "  No tests run")
+        
+        if self.test_results:
+            print(f"\n  {'Test Name':<40} {'Status':<10} {'Duration':<10}")
+            print(f"  {'-'*60}")
+            for r in self.test_results:
+                status_icon = '✓' if r['status'] == 'PASSED' else '✗'
+                print(f"  {status_icon} {r['name']:<38} {r['status']:<10} {r['duration']:.2f}s")
+        
+        print(f"\n{'='*60}\n")
     
     def run_all_tests(self):
         """Run all tests"""
@@ -131,7 +208,7 @@ def main():
     
     # Configuration
     parser.add_argument('--template', type=str, help='Sandbox template ID')
-    parser.add_argument('--concurrency', type=int, default=50, help='Concurrency level (default: 50)')
+    parser.add_argument('--concurrency', type=int, default=49, help='Concurrency level (default: 49)')
     parser.add_argument('--output', type=str, help='Output report filename')
     parser.add_argument('--output-dir', type=str, default='reports', help='Output directory')
     

@@ -5,8 +5,10 @@
 general:
   template_id: ${CUBE_TEMPLATE_ID}  # Sandbox template ID (from environment variable)
   api_key: ${E2B_API_KEY}           # E2B API Key (from environment variable)
+  api_url: ${E2B_API_URL}           # E2B API URL (from environment variable, optional for custom endpoint)
+  domain: ${E2B_DOMAIN}             # E2B Domain (from environment variable, optional for custom endpoint)
   output_dir: reports               # Directory for test reports
-  default_concurrency: 50           # Default number of concurrent sandboxes
+  default_concurrency: 49           # Default number of concurrent sandboxes
 
 # Performance Test Settings
 performance:

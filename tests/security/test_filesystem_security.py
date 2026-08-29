@@ -30,6 +30,31 @@ class FilesystemSecurityTest:
     def __init__(self, template: str, report: ReportGenerator = None):
         self.template = template
         self.report = report or ReportGenerator()
+        # 华为云配置：从环境变量读取
+        self.api_url = os.environ.get("E2B_API_URL")
+        self.sandbox_url = os.environ.get("E2B_SANDBOX_URL")
+        self.api_key = os.environ.get("E2B_API_KEY")
+    
+    def _create_sandbox(self, timeout: int = 120):
+        """创建 Sandbox 实例，自动注入华为云配置"""
+        kwargs = {
+            "template": self.template,
+            "timeout": timeout,
+        }
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
+        if self.api_url:
+            kwargs["api_url"] = self.api_url
+        if self.sandbox_url:
+            kwargs["sandbox_url"] = self.sandbox_url
+        
+        sbx = Sandbox.create(**kwargs)
+        
+        # 按需应用华为云补丁（标准 E2B 环境自动跳过）
+        from utils.huawei_patch import patch_sandbox_if_needed
+        patch_sandbox_if_needed(sbx)
+        
+        return sbx
     
     def test_file_isolation(self) -> Dict[str, Any]:
         """
@@ -51,7 +76,7 @@ class FilesystemSecurityTest:
         
         # Sandbox A: Create file
         print(f"  [1] Creating file in Sandbox A: {filename}")
-        sbx_a = Sandbox.create(template=self.template, timeout=120)
+        sbx_a = self._create_sandbox(timeout=120)
         
         try:
             create_result = sbx_a.commands.run(f"echo '{content}' > {filename}", timeout=10)
@@ -66,11 +91,12 @@ class FilesystemSecurityTest:
             
             print(f"    ✓ File created in Sandbox A")
         finally:
-            sbx_a.kill()
+            from utils.huawei_patch import safe_kill_sandbox
+            safe_kill_sandbox(sbx_a, "A")
         
         # Sandbox B: Try to read file
         print(f"\n  [2] Trying to read file from Sandbox B")
-        sbx_b = Sandbox.create(template=self.template, timeout=120)
+        sbx_b = self._create_sandbox(timeout=120)
         
         try:
             read_result = sbx_b.commands.run(f"test -f {filename} && echo 'exists' || echo 'not_exists'", timeout=10)
@@ -85,7 +111,8 @@ class FilesystemSecurityTest:
             file_in_b = False
             print(f"    ✓ File NOT accessible (ISOLATION PASSED)")
         finally:
-            sbx_b.kill()
+            from utils.huawei_patch import safe_kill_sandbox
+            safe_kill_sandbox(sbx_b, "B")
         
         success = file_in_a and not file_in_b
         
@@ -114,18 +141,19 @@ class FilesystemSecurityTest:
         
         # Sandbox A: Create directory
         print(f"  [1] Creating directory in Sandbox A: {dirname}")
-        sbx_a = Sandbox.create(template=self.template, timeout=120)
+        sbx_a = self._create_sandbox(timeout=120)
         
         try:
             sbx_a.commands.run(f"mkdir -p {dirname}", timeout=10)
             sbx_a.commands.run(f"echo 'test' > {dirname}/file1.txt", timeout=10)
             print(f"    ✓ Directory created in Sandbox A")
         finally:
-            sbx_a.kill()
+            from utils.huawei_patch import safe_kill_sandbox
+            safe_kill_sandbox(sbx_a, "A")
         
         # Sandbox B: Check if directory exists
         print(f"\n  [2] Checking for directory in Sandbox B")
-        sbx_b = Sandbox.create(template=self.template, timeout=120)
+        sbx_b = self._create_sandbox(timeout=120)
         
         try:
             result = sbx_b.commands.run(f"ls {dirname} 2>&1", timeout=10)
@@ -136,7 +164,8 @@ class FilesystemSecurityTest:
             else:
                 print(f"    ✓ Directory NOT visible (ISOLATION PASSED)")
         finally:
-            sbx_b.kill()
+            from utils.huawei_patch import safe_kill_sandbox
+            safe_kill_sandbox(sbx_b, "B")
         
         success = not dir_in_b
         

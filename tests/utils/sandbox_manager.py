@@ -40,6 +40,9 @@ class SandboxManager:
         self,
         template: Optional[str] = None,
         api_key: Optional[str] = None,
+        api_url: Optional[str] = None,
+        domain: Optional[str] = None,
+        sandbox_url: Optional[str] = None,
         auto_cleanup: bool = True
     ):
         """
@@ -48,10 +51,16 @@ class SandboxManager:
         Args:
             template: Sandbox template ID (defaults to CUBE_TEMPLATE_ID env var)
             api_key: E2B API key (defaults to E2B_API_KEY env var)
+            api_url: E2B API URL (defaults to E2B_API_URL env var, optional for custom endpoint)
+            domain: E2B Domain (defaults to E2B_DOMAIN env var, optional for custom endpoint)
+            sandbox_url: URL to connect to sandbox (defaults to E2B_SANDBOX_URL env var)
             auto_cleanup: Automatically cleanup sandboxes on context exit
         """
         self.template = template or os.environ.get("CUBE_TEMPLATE_ID")
         self.api_key = api_key or os.environ.get("E2B_API_KEY")
+        self.api_url = api_url or os.environ.get("E2B_API_URL")
+        self.domain = domain or os.environ.get("E2B_DOMAIN")
+        self.sandbox_url = sandbox_url or os.environ.get("E2B_SANDBOX_URL")
         self.auto_cleanup = auto_cleanup
         
         self._sandboxes: List[SandboxInfo] = []
@@ -77,7 +86,29 @@ class SandboxManager:
             raise ValueError("Template ID is required. Set CUBE_TEMPLATE_ID or pass template parameter.")
         
         start_time = time.perf_counter()
-        sandbox = Sandbox.create(template=template, api_key=self.api_key, timeout=timeout)
+        
+        # Build Sandbox.create kwargs with optional parameters
+        create_kwargs = {
+            "template": template,
+            "api_key": self.api_key,
+            "timeout": timeout
+        }
+        if self.api_url:
+            create_kwargs["api_url"] = self.api_url
+        if self.domain:
+            create_kwargs["domain"] = self.domain
+        if self.sandbox_url:
+            create_kwargs["sandbox_url"] = self.sandbox_url
+            
+        sandbox = Sandbox.create(**create_kwargs)
+        
+        # 按需应用华为云补丁（标准 E2B 环境自动跳过）
+        try:
+            from utils.huawei_patch import patch_sandbox_if_needed
+            patch_sandbox_if_needed(sandbox)
+        except ImportError:
+            pass  # 补丁模块不存在时跳过，保持标准 E2B 原生行为
+        
         create_duration = time.perf_counter() - start_time
         
         info = SandboxInfo(
