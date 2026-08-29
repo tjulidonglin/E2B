@@ -67,28 +67,57 @@ class ColdStartTest:
             if time.perf_counter() - probe_start > self.PROBE_TIMEOUT:
                 return False, time.perf_counter() - probe_start
             time.sleep(self.PROBE_RETRY_INTERVAL)
+
+    def _measure_rtt_baseline(self, sbx, probe_count: int = 30) -> float:
+        """
+        测量网络 RTT 基线（通过执行无实际工作的 echo 命令）。
+        返回最小端到端时间（秒），近似等于纯网络 RTT（因为 echo 执行时间 ≈ 0）。
+        """
+        rtt_samples = []
+        for _ in range(probe_count):
+            start = time.perf_counter()
+            try:
+                sbx.commands.run("echo 1", timeout=5)
+                elapsed = time.perf_counter() - start
+                rtt_samples.append(elapsed)
+            except Exception:
+                pass
+        return min(rtt_samples) if rtt_samples else 0.0
     
-    def _measure_single_cold_start(self) -> Tuple[float, float, float]:
+    def _measure_single_cold_start(self) -> Tuple[float, float, float, float, float]:
+        """
+        测量单次冷启动耗时。
+        
+        Returns:
+            (e2e_create_time, probe_time, total_time, rtt_baseline, cloud_internal_time)
+            cloud_internal_time = total_time - rtt_baseline (近似云平台内部耗时)
+        """
         start = time.perf_counter()
         try:
             sbx = self._create_sandbox(timeout=120)
         except Exception as e:
             print(f"    Sandbox creation failed: {e}")
-            return -1.0, -1.0, -1.0
+            return -1.0, -1.0, -1.0, 0.0, 0.0
         
         create_elapsed = time.perf_counter() - start
         ok, probe_elapsed = self._probe_sandbox_ready(sbx)
         total_elapsed = create_elapsed + probe_elapsed
         
+        # 测量 RTT 基线（沙箱已就绪，执行 echo 最小耗时 ≈ 纯网络 RTT）
+        rtt_baseline = self._measure_rtt_baseline(sbx, probe_count=30)
+        
+        # 估算：云平台内部耗时 = 总耗时 − 网络 RTT 基线
+        cloud_internal_time = max(0.0, total_elapsed - rtt_baseline)
+        
         if not ok:
             from utils.huawei_patch import safe_kill_sandbox
             safe_kill_sandbox(sbx)
-            return create_elapsed, -1.0, -1.0
+            return create_elapsed, -1.0, -1.0, rtt_baseline, 0.0
         
         from utils.huawei_patch import safe_kill_sandbox
         safe_kill_sandbox(sbx)
         
-        return create_elapsed, probe_elapsed, total_elapsed
+        return create_elapsed, probe_elapsed, total_elapsed, rtt_baseline, cloud_internal_time
     
     def _run_single_test(self, test_num: int, total: int) -> Tuple[float, float, float]:
         return self._measure_single_cold_start()
@@ -147,6 +176,8 @@ class ColdStartTest:
         create_times = [r[0] for r in results]
         probe_times = [r[1] for r in results]
         total_times = [r[2] for r in results]
+        rtt_bases = [r[3] for r in results]
+        cloud_times = [r[4] for r in results]
         
         def calc_stats(times: List[float]) -> Dict:
             if not times: return {}
@@ -171,6 +202,8 @@ class ColdStartTest:
         create_stats = calc_stats(create_times)
         probe_stats = calc_stats(probe_times)
         total_stats = calc_stats(total_times)
+        rtt_stats = calc_stats(rtt_bases)
+        cloud_stats = calc_stats(cloud_times)
         
         print(f"\n{'='*60}")
         print(f"  Statistics ({mode})")
@@ -181,6 +214,18 @@ class ColdStartTest:
             if stats:
                 print(f"  {label:<12} {stats['min']:>10.3f} {stats['max']:>10.3f} {stats['mean']:>10.3f} {stats['p95']:>10.3f} {stats['p99']:>10.3f}")
         
+        # 输出 RTT 基线统计
+        if rtt_stats:
+            print(f"\n  --- Network RTT Baseline (网络 RTT 基线) ---")
+            print(f"  {'Metric':<12} {'Min':>10} {'Max':>10} {'Mean':>10} {'P95':>10} {'P99':>10}")
+            print(f"  {'RTT':<12} {rtt_stats['min']:>10.3f} {rtt_stats['max']:>10.3f} {rtt_stats['mean']:>10.3f} {rtt_stats['p95']:>10.3f} {rtt_stats['p99']:>10.3f}")
+        
+        # 输出云平台内部耗时统计（减去网络 RTT 基线后）
+        if cloud_stats:
+            print(f"\n  --- Cloud Platform Internal Time (云平台内部耗时) ---")
+            print(f"  {'Metric':<12} {'Min':>10} {'Max':>10} {'Mean':>10} {'P95':>10} {'P99':>10}")
+            print(f"  {'Cloud':<12} {cloud_stats['min']:>10.3f} {cloud_stats['max']:>10.3f} {cloud_stats['mean']:>10.3f} {cloud_stats['p95']:>10.3f} {cloud_stats['p99']:>10.3f}")
+        
         self.report.add_test_result(
             test_name=f'Cold Start ({mode})',
             test_type='performance',
@@ -190,9 +235,15 @@ class ColdStartTest:
                 'Avg Total': f"{total_stats['mean']:.3f}s",
                 'P95': f"{total_stats['p95']:.3f}s",
                 'P99': f"{total_stats['p99']:.3f}s",
+                # 新增：网络 RTT 基线
+                'Avg RTT Baseline': f"{rtt_stats['mean']:.3f}s" if rtt_stats else 'N/A',
+                'P95 RTT Baseline': f"{rtt_stats['p95']:.3f}s" if rtt_stats else 'N/A',
+                # 新增：云平台内部耗时
+                'Avg Cloud Internal': f"{cloud_stats['mean']:.3f}s" if cloud_stats else 'N/A',
+                'P95 Cloud Internal': f"{cloud_stats['p95']:.3f}s" if cloud_stats else 'N/A',
             }
         )
-        return {'success': True, 'stats': total_stats}
+        return {'success': True, 'stats': total_stats, 'rtt_stats': rtt_stats, 'cloud_stats': cloud_stats}
 
 
 def main():

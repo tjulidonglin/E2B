@@ -59,6 +59,22 @@ class ThroughputTest:
         patch_sandbox_if_needed(sbx)
         
         return sbx
+
+    def _measure_rtt_baseline(self, sbx, probe_count: int = 30) -> float:
+        """
+        测量网络 RTT 基线（通过执行无实际工作的 echo 命令）。
+        返回最小端到端时间（秒），近似等于纯网络 RTT（因为 echo 执行时间 ≈ 0）。
+        """
+        rtt_samples = []
+        for _ in range(probe_count):
+            start = time.perf_counter()
+            try:
+                sbx.commands.run("echo 1", timeout=5)
+                elapsed = time.perf_counter() - start
+                rtt_samples.append(elapsed)
+            except Exception:
+                pass
+        return min(rtt_samples) if rtt_samples else 0.0
     
     def test_concurrent_creation(self, count: int = None) -> Dict[str, Any]:
         """
@@ -79,16 +95,25 @@ class ThroughputTest:
         success_count = 0
         failed_count = 0
         create_times = []
+        rtt_bases = []  # 每个沙箱的 RTT 基线
+        cloud_times = []  # 每个沙箱的云平台内部耗时
         
         def create_sandbox(idx: int):
             try:
                 s = time.perf_counter()
                 sbx = self._create_sandbox(timeout=120)
-                elapsed = time.perf_counter() - s
+                create_elapsed = time.perf_counter() - s
+                
+                # 测量 RTT 基线（沙箱已就绪）
+                rtt_baseline = self._measure_rtt_baseline(sbx, probe_count=20)
+                
+                # 估算：云平台内部耗时 = 总耗时 − 网络 RTT 基线
+                cloud_elapsed = max(0.0, create_elapsed - rtt_baseline)
+                
                 sbx.kill()
-                return True, elapsed
+                return True, create_elapsed, rtt_baseline, cloud_elapsed
             except Exception as e:
-                return False, str(e)
+                return False, 0.0, 0.0, 0.0
         
         with ThreadPoolExecutor(max_workers=count) as executor:
             futures = {executor.submit(create_sandbox, i): i for i in range(count)}
@@ -97,8 +122,11 @@ class ThroughputTest:
                 success, result = future.result()
                 if success:
                     success_count += 1
-                    create_times.append(result)
-                    print(f"  [{i}/{count}] ✓ Sandbox created in {result:.2f}s")
+                    create_times.append(result[1])  # create_elapsed
+                    rtt_bases.append(result[2])     # rtt_baseline
+                    cloud_times.append(result[3])   # cloud_elapsed
+                    print(f"  [{i}/{count}] ✓ Sandbox created in {result[1]:.2f}s "
+                          f"(RTT: {result[2]:.3f}s, Cloud: {result[3]:.3f}s)")
                 else:
                     failed_count += 1
                     print(f"  [{i}/{count}] ✗ Failed: {result}")
@@ -106,7 +134,7 @@ class ThroughputTest:
         total_time = time.perf_counter() - start_time
         throughput = success_count / total_time if total_time > 0 else 0
         
-        # 计算创建时间的百分位数
+        # 计算统计（端到端）
         def _percentile(values, p):
             if not values:
                 return None
@@ -117,8 +145,19 @@ class ThroughputTest:
             idx = min(int(n * p), n - 1)
             return sorted_vals[idx]
         
-        p95_create = _percentile(create_times, 0.95)
-        p99_create = _percentile(create_times, 0.99)
+        p95_latency = _percentile(create_times, 0.95)
+        p99_latency = _percentile(create_times, 0.99)
+        avg_create = statistics.mean(create_times) if create_times else 0.0
+        
+        # 计算 RTT 基线统计
+        avg_rtt = statistics.mean(rtt_bases) if rtt_bases else 0.0
+        p95_rtt = _percentile(rtt_bases, 0.95) if rtt_bases else 0.0
+        p99_rtt = _percentile(rtt_bases, 0.99) if rtt_bases else 0.0
+        
+        # 计算云平台内部耗时统计
+        avg_cloud = statistics.mean(cloud_times) if cloud_times else 0.0
+        p95_cloud = _percentile(cloud_times, 0.95) if cloud_times else 0.0
+        p99_cloud = _percentile(cloud_times, 0.99) if cloud_times else 0.0
         
         result = {
             'test_name': 'Concurrent Creation Throughput',
@@ -131,13 +170,22 @@ class ThroughputTest:
                 'Failed': failed_count,
                 'Success Rate': f"{success_count/count*100:.1f}%",
                 'Throughput': f"{throughput:.2f} sandboxes/s",
-                'Avg Create Time': f"{sum(create_times)/len(create_times):.2f}s" if create_times else 'N/A',
-                'P95 Create Time': f"{p95_create:.2f}s" if p95_create is not None else 'N/A',
-                'P99 Create Time': f"{p99_create:.2f}s" if p99_create is not None else 'N/A',
                 'Total Time': f"{total_time:.2f}s",
+                # 端到端统计（含网络 RTT）
+                'Avg Create Time': f"{avg_create:.3f}s",
+                'P95 Create Time': f"{p95_latency:.3f}s" if p95_latency is not None else 'N/A',
+                'P99 Create Time': f"{p99_latency:.3f}s" if p99_latency is not None else 'N/A',
+                # 网络 RTT 基线
+                'Avg RTT Baseline': f"{avg_rtt:.3f}s",
+                'P95 RTT Baseline': f"{p95_rtt:.3f}s" if p95_rtt is not None else 'N/A',
+                'P99 RTT Baseline': f"{p99_rtt:.3f}s" if p99_rtt is not None else 'N/A',
+                # 云平台内部耗时（减去网络 RTT 基线）
+                'Avg Cloud Internal': f"{avg_cloud:.3f}s",
+                'P95 Cloud Internal': f"{p95_cloud:.3f}s" if p95_cloud is not None else 'N/A',
+                'P99 Cloud Internal': f"{p99_cloud:.3f}s" if p99_cloud is not None else 'N/A',
             },
         }
-        
+
         self.report.add_test_result(**result)
         return result
     
