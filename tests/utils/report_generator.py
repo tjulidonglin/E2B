@@ -128,7 +128,59 @@ class ReportGenerator:
         .progress-bar.failed {{ background: #ef4444; }}
         .timestamp {{ color: #9ca3af; font-size: 0.9em; }}
         .error-msg {{ background: #fee2e2; border: 1px solid #fecaca; border-radius: 5px; padding: 10px; margin-top: 10px; color: #dc2626; font-family: monospace; font-size: 0.9em; }}
+        
+        /* 交互样式 */
+        .test-row {{ transition: background-color 0.2s; }}
+        .test-row:hover {{ background: #e5e7eb; }}
+        .test-details {{ background: #f9fafb; }}
+        .test-details td {{ padding: 20px; border-bottom: 2px solid #e5e7eb; }}
+        .detail-section {{ margin-bottom: 15px; padding: 15px; background: white; border-radius: 8px; border-left: 4px solid #667eea; }}
+        .detail-section h4 {{ color: #374151; margin-bottom: 10px; font-size: 1.1em; }}
+        .detail-table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+        .detail-table th, .detail-table td {{ padding: 8px 12px; border: 1px solid #e5e7eb; }}
+        .detail-table th {{ background: #f9fafb; color: #374151; }}
+        .detail-table td {{ color: #666; }}
+        .error-text {{ background: #fee2e2; border: 1px solid #fecaca; border-radius: 5px; padding: 15px; color: #dc2626; font-family: 'Courier New', monospace; font-size: 0.9em; white-space: pre-wrap; max-height: 400px; overflow-y: auto; }}
+        .btn-details {{ background: #667eea; color: white; border: none; padding: 6px 12px; border-radius: 5px; cursor: pointer; font-size: 0.85em; transition: background 0.2s; }}
+        .btn-details:hover {{ background: #5568d3; }}
+        .btn-details.expanded {{ background: #764ba2; }}
     </style>
+    
+    <script>
+        function toggleDetails(detailsId) {{
+            const detailsRow = document.getElementById(detailsId);
+            if (!detailsRow) return;
+            
+            const isVisible = detailsRow.style.display !== 'none';
+            detailsRow.style.display = isVisible ? 'none' : 'table-row';
+            
+            // 更新所有展开按钮的状态
+            document.querySelectorAll('.btn-details').forEach(btn => {{
+                const target = btn.getAttribute('data-target');
+                if (target === detailsId) {{
+                    btn.textContent = isVisible ? '查看详情' : '收起详情';
+                    btn.classList.toggle('expanded', !isVisible);
+                }}
+            }});
+        }}
+        
+        // 页面加载后，自动展开失败的测试详情
+        document.addEventListener('DOMContentLoaded', function() {{
+            const failedTests = document.querySelectorAll('.status-fail');
+            failedTests.forEach(row => {{
+                const detailsId = 'test-details-' + (Array.from(document.querySelectorAll('.test-row')).indexOf(row) || 0);
+                const detailsRow = document.getElementById(detailsId);
+                if (detailsRow) {{
+                    detailsRow.style.display = 'table-row';
+                    const btn = document.querySelector('.btn-details[data-target="' + detailsId + '"]');
+                    if (btn) {{
+                        btn.textContent = '收起详情';
+                        btn.classList.add('expanded');
+                    }}
+                }}
+            }});
+        }});
+    </script>
 </head>
 <body>
     <div class="container">
@@ -206,16 +258,19 @@ class ReportGenerator:
                         <th>Status</th>
                         <th>Duration</th>
                         <th>Details</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
 """
-        for test in tests:
+        for idx, test in enumerate(tests):
             status_class = "status-pass" if test['success'] else "status-fail"
             status_text = "✓ PASS" if test['success'] else "✗ FAIL"
+            row_id = f"test-row-{idx}"
+            details_id = f"test-details-{idx}"
             
             html += f"""
-                    <tr>
+                    <tr class="test-row" onclick="toggleDetails('{details_id}')" style="cursor: pointer;">
                         <td>{test['test_name']}</td>
                         <td class="{status_class}">{status_text}</td>
                         <td>{test['duration']:.3f}s</td>
@@ -231,6 +286,40 @@ class ReportGenerator:
             
             if test['error']:
                 html += f'<div class="error-msg">{test["error"]}</div>'
+            
+            html += f"""
+                        </td>
+                        <td><button class="btn-details" data-target="{details_id}">查看详情</button></td>
+                    </tr>
+                    <tr class="test-details" id="{details_id}" style="display: none;">
+                        <td colspan="4">
+"""
+            
+            # 添加详情区域
+            if test.get('details'):
+                html += '<div class="detail-section"><h4>📝 测试详情</h4><dl class="metrics">'
+                for key, value in test['details'].items():
+                    html += f'<dt>{key}:</dt><dd>{value}</dd>'
+                html += '</dl></div>'
+            
+            if test.get('error'):
+                html += f'<div class="detail-section"><h4>❌ 错误信息</h4><pre class="error-text">{test["error"]}</pre></div>'
+            
+            if test.get('metrics'):
+                html += f'<div class="detail-section"><h4>📊 性能指标</h4><dl class="metrics">'
+                for key, value in test['metrics'].items():
+                    html += f'<dt>{key}:</dt><dd>{value}</dd>'
+                html += '</dl></div>'
+            
+            # 如果是性能测试，添加详细数据表格
+            if test.get('test_type') == 'performance' and test.get('metrics'):
+                html += '<div class="detail-section"><h4>📋 详细数据</h4><table class="detail-table"><thead><tr>'
+                for key in test['metrics'].keys():
+                    html += f'<th>{key}</th>'
+                html += '</tr></thead><tbody><tr>'
+                for value in test['metrics'].values():
+                    html += f'<td>{value}</td>'
+                html += '</tr></tbody></table></div>'
             
             html += """
                         </td>
