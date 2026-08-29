@@ -119,7 +119,7 @@ class ColdStartTest:
         
         return create_elapsed, probe_elapsed, total_elapsed, rtt_baseline, cloud_internal_time
     
-    def _run_single_test(self, test_num: int, total: int) -> Tuple[float, float, float]:
+    def _run_single_test(self, test_num: int, total: int) -> Tuple[float, float, float, float, float]:
         return self._measure_single_cold_start()
     
     def run_sequential_test(self, runs: int = 10) -> Dict[str, Any]:
@@ -131,12 +131,12 @@ class ColdStartTest:
         results = []
         for i in range(runs):
             print(f"  [{i+1}/{runs}] Creating sandbox...", end="", flush=True)
-            create_t, probe_t, total_t = self._measure_single_cold_start()
+            create_t, probe_t, total_t, rtt_t, cloud_t = self._measure_single_cold_start()
             if total_t < 0:
                 print(f" FAILED")
                 continue
-            results.append((create_t, probe_t, total_t))
-            print(f" OK | total={total_t:.3f}s")
+            results.append((create_t, probe_t, total_t, rtt_t, cloud_t))
+            print(f" OK | total={total_t:.3f}s | rtt={rtt_t:.3f}s | cloud={cloud_t:.3f}s")
             if i < runs - 1:
                 time.sleep(0.5)
         return self._calculate_statistics(results, "Sequential")
@@ -157,10 +157,10 @@ class ColdStartTest:
             for future in as_completed(futures):
                 test_num = futures[future]
                 try:
-                    create_t, probe_t, total_t = future.result()
+                    create_t, probe_t, total_t, rtt_t, cloud_t = future.result()
                     if total_t > 0:
-                        results.append((create_t, probe_t, total_t))
-                        print(f"  [{test_num}/{count}] OK | total={total_t:.3f}s")
+                        results.append((create_t, probe_t, total_t, rtt_t, cloud_t))
+                        print(f"  [{test_num}/{count}] OK | total={total_t:.3f}s | rtt={rtt_t:.3f}s | cloud={cloud_t:.3f}s")
                     else:
                         failed += 1
                         print(f"  [{test_num}/{count}] FAILED")
